@@ -21,6 +21,7 @@ import { codeGeneratorResponseSchema } from "./schemas/codeGenerator.js";
 import { codeImproverResponseSchema } from "./schemas/codeImprover.js";
 import { workflowPlannerSchema } from "./schemas/workflowPlanner.js";
 import { summarizeAgentResponseSchema } from "./schemas/summarizeAgent.js";
+import { terminalAgentResponseSchema } from "./schemas/terminalAgent.js";
 import { baseAgentResponseSchema } from "./schemas/baseAgent.js";
 import { lumenPersonality } from "./lib/lumenPersonality.js";
 import { whoAmI, evolvePersonality } from "./lib/personalityEvolver.js";
@@ -91,6 +92,7 @@ function getAgentName(pathname) {
   if (pathname.startsWith("/api/code-improver")) return "code-improver";
   if (pathname.startsWith("/api/workflow-planner")) return "workflow-planner";
   if (pathname.startsWith("/api/summarize")) return "summarize";
+  if (pathname.startsWith("/api/terminal-agent")) return "terminal-agent";
   if (pathname.startsWith("/api/lumen")) return "lumen";
   if (pathname.startsWith("/api/anchors")) return "anchors";
   if (pathname.startsWith("/api/recall")) return "recall";
@@ -437,6 +439,13 @@ app.post("/api/summarize", (req, res) =>
   handleSchemaEndpoint(req, res, {
     schema: summarizeAgentResponseSchema,
     logLabel: "/api/summarize"
+  })
+);
+
+app.post("/api/terminal-agent", (req, res) =>
+  handleSchemaEndpoint(req, res, {
+    schema: terminalAgentResponseSchema,
+    logLabel: "/api/terminal-agent"
   })
 );
 
