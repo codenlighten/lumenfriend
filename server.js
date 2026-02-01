@@ -1256,27 +1256,23 @@ Type your question below and I'll respond!`;
               // Send execution result
               await telegramBot.sendMessage(chatId, formattedResult);
               
-              // If successful, continue with function calling flow
+              // If successful, continue with function calling flow using stored context
               if (execResult.success) {
-                // Add the tool response to messages and get final AI response
-                const messages = [
-                  {
-                    role: "system",
-                    content: `You are Lumen, an AI assistant. You just executed a terminal command and received output. Explain the results to the user.`
-                  },
-                  {
-                    role: "user",
-                    content: pending.explanation
-                  },
-                  {
-                    role: "tool",
-                    tool_call_id: pending.functionCall?.id || "terminal_exec",
-                    content: execResult.stdout || "(no output)"
-                  }
-                ];
+                // Rebuild messages with proper OpenAI function calling sequence
+                const continuedMessages = [...pending.messages];
+                
+                // Add the assistant message with tool_calls
+                continuedMessages.push(pending.assistantMessage);
+                
+                // Add the tool response
+                continuedMessages.push({
+                  role: "tool",
+                  tool_call_id: pending.functionCall.id,
+                  content: execResult.stdout || "(no output)"
+                });
                 
                 const functions = getFunctionDefinitions();
-                const finalAiResponse = await queryOpenAIWithFunctions(messages, functions);
+                const finalAiResponse = await queryOpenAIWithFunctions(continuedMessages, functions);
                 const finalResponse = finalAiResponse.content || "Command executed successfully.";
                 
                 await telegramBot.sendMessage(chatId, finalResponse);
@@ -1378,12 +1374,14 @@ Context: ${JSON.stringify(contextForModel)}`
               
               // Handle terminal command approval
               if (result.needsApproval && result.command) {
-                // Store pending command
+                // Store pending command WITH full context for proper OpenAI flow
                 pendingCommands.set(userId, {
                   command: result.command,
                   explanation: result.explanation,
                   timestamp: Date.now(),
-                  functionCall: call
+                  functionCall: call,
+                  messages: messages, // Store messages array for continuation
+                  assistantMessage: aiResponse.message // Store assistant message with tool_calls
                 });
                 
                 // Send approval request
