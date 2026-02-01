@@ -544,8 +544,60 @@ app.post("/api/lumen", async (req, res) => {
 
     queryOptions.context = contextForModel;
 
-    // Get initial response
-    const initialResult = await queryOpenAI(message, queryOptions);
+    // NEW: Use tool router to check if we should invoke a tool
+    console.log(`[API/lumen] Routing query to best tool`);
+    const routingDecision = await routeToTool(message, contextForModel);
+    console.log(`[API/lumen] Chosen tool: ${routingDecision.chosenTool} (${routingDecision.reasoning})`);
+
+    let initialResult;
+
+    // Check if we should invoke a tool
+    if (routingDecision.shouldInvokeTool && routingDecision.chosenToolIndex >= 0) {
+      const tool = AVAILABLE_TOOLS[routingDecision.chosenToolIndex];
+      
+      // Handle direct response (no tool execution)
+      if (tool.type === "direct") {
+        console.log(`[API/lumen] Direct response - querying OpenAI`);
+        initialResult = await queryOpenAI(message, queryOptions);
+      } 
+      // Handle tool execution
+      else {
+        console.log(`[API/lumen] Executing tool: ${tool.name}`);
+        
+        // Add workspace context for terminal commands
+        const toolContext = tool.name === "terminal" 
+          ? { workspacePath: "/home/greg/dev/lumenfriend" }
+          : null;
+        
+        const toolResult = await executeTool(tool, message, toolContext);
+        
+        // For API endpoint, we can't request approval - just return the command
+        if (toolResult.needsApproval) {
+          return res.json({
+            sessionId,
+            needsApproval: true,
+            tool: tool.name,
+            command: toolResult.data?.command,
+            reasoning: toolResult.data?.reasoning,
+            routingDecision: routingDecision
+          });
+        }
+        
+        // Tool executed successfully - format as baseAgent response
+        const formattedOutput = formatToolOutput(toolResult, routingDecision);
+        initialResult = {
+          response: formattedOutput,
+          continue: false,
+          responseType: "tool_enhanced",
+          toolUsed: tool.name,
+          toolData: toolResult.data
+        };
+      }
+    } else {
+      // No tool selected - respond conversationally
+      console.log(`[API/lumen] No tool invocation - conversational response`);
+      initialResult = await queryOpenAI(message, queryOptions);
+    }
 
     // Chain responses if continue is true (up to 10 iterations)
     const chainingOptions = {
