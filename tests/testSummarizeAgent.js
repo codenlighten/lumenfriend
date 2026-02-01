@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
-import { queryOpenAI } from "./lib/openaiWrapper.js";
-import { summarizeAgentResponseSchema } from "./schemas/summarizeAgent.js";
+import { queryOpenAI } from "../lib/openaiWrapper.js";
+import { summarizeAgentResponseSchema } from "../schemas/summarizeAgent.js";
 
 dotenv.config();
 

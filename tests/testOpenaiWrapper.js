@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { queryOpenAI } from "./lib/openaiWrapper.js";
+import { queryOpenAI } from "../lib/openaiWrapper.js";
 
 dotenv.config();
 

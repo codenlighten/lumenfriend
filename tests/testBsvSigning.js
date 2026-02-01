@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fetch from "node-fetch";
-import { verifySignature } from "./lib/platformSigner.js";
+import { verifySignature } from "../lib/platformSigner.js";
 import { readFileSync } from "node:fs";
 
 const BASE_URL = "http://localhost:3000";
