@@ -4,6 +4,9 @@ FROM node:20-slim AS base
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Install curl for terminal command testing
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 FROM base AS deps
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
