@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { queryOpenAI } from "./lib/openaiWrapper.js";
-import { queryOpenAIWithFunctions } from "./lib/openaiWrapper.js";
 import { loadSession, saveSession, addInteraction, buildContext } from "./lib/memoryStore.js";
+import { routeToTool, executeTool, formatToolOutput, AVAILABLE_TOOLS } from "./lib/toolRouter.js";
 import { getSession, touchSession, startCleanupTimer } from "./lib/sessionMap.js";
 import { encryptJson } from "./lib/encryption.js";
 import { publishText } from "./lib/simpleBsvClient.js";
@@ -46,7 +46,6 @@ import { loadUserStats, saveUserStats, recordInteraction } from "./lib/statsTrac
 import { detectContinuity, extractPreviousContext, buildContextPrompt } from "./lib/contextThreading.js";
 import { getTeachingContext, loadTeachingHistory } from "./lib/teachingEngine.js";
 import { hasAccess, getAccessDeniedMessage } from "./lib/accessControl.js";
-import { getFunctionDefinitions, executeFunctionCall, formatCommandApprovalRequest } from "./lib/functionCalling.js";
 import { validateCommand, executeCommand, formatExecutionResult } from "./lib/terminalExecutor.js";
 
 dotenv.config();
@@ -1256,39 +1255,35 @@ Type your question below and I'll respond!`;
               // Send execution result
               await telegramBot.sendMessage(chatId, formattedResult);
               
-              // If successful, continue with function calling flow using stored context
+              // If successful, save output and format for user
               if (execResult.success) {
-                // Rebuild messages with proper OpenAI function calling sequence
-                const continuedMessages = [...pending.messages];
-                
-                // Add the assistant message with tool_calls
-                continuedMessages.push(pending.assistantMessage);
-                
-                // Add the tool response
-                continuedMessages.push({
-                  role: "tool",
-                  tool_call_id: pending.functionCall.id,
-                  content: execResult.stdout || "(no output)"
-                });
-                
                 // Save the command output to session for context continuity
                 await addTelegramInteraction(userId, session, {
                   role: "assistant",
                   text: `[Terminal Command Executed: ${pending.command}]\n\nOutput:\n${execResult.stdout}`
                 });
                 
-                const functions = getFunctionDefinitions();
-                const finalAiResponse = await queryOpenAIWithFunctions(continuedMessages, functions);
-                const finalResponse = finalAiResponse.content || "Command executed successfully.";
+                // Format the tool output for user
+                const toolOutput = {
+                  success: true,
+                  toolName: "terminal",
+                  data: {
+                    command: pending.command,
+                    output: execResult.stdout,
+                    reasoning: pending.explanation
+                  }
+                };
+                
+                const explanation = `Here's what I found:\n\n${execResult.stdout.substring(0, 1000)}${execResult.stdout.length > 1000 ? '\n\n...(output truncated)' : ''}`;
                 
                 // Save AI explanation to session
                 await addTelegramInteraction(userId, session, {
                   role: "assistant",
-                  text: finalResponse
+                  text: explanation
                 });
                 
                 // Use chunked message sending for long responses
-                const messages = telegramBot.formatTelegramResponse(finalResponse);
+                const messages = telegramBot.formatTelegramResponse(explanation);
                 await telegramBot.sendMultipleMessages(chatId, messages);
               }
               
@@ -1347,115 +1342,82 @@ Type your question below and I'll respond!`;
             userId: userId  // Add userId for anchoring
           };
 
-          // Build messages for function calling
-          const messages = [
-            {
-              role: "system",
-              content: `You are Lumen, SmartLedger Technology's intelligent guide. You have access to powerful tools:
-- generate_code: Write code from descriptions
-- improve_code: Review and enhance code
-- plan_workflow: Design system architectures
-- summarize_conversation: Extract key points
-- anchor_to_blockchain: Create immutable proof
-
-Use these tools naturally when users ask for these capabilities. You don't need to announce you're using a tool - just use it and present the results.
-
-Context: ${JSON.stringify(contextForModel)}`
-            },
-            {
-              role: "user",
-              content: contextPrompt ? `${text}${contextPrompt}` : text
-            }
-          ];
-
-          // Get function definitions
-          const functions = getFunctionDefinitions();
-
-          // Query with function calling
-          const aiResponse = await queryOpenAIWithFunctions(messages, functions);
+          // NEW: Use tool router instead of OpenAI function calling
+          console.log(`[TG] Routing query to best tool`);
+          const routingDecision = await routeToTool(text, contextForModel);
+          console.log(`[TG] Chosen tool: ${routingDecision.chosenTool} (${routingDecision.reasoning})`);
 
           let finalResponse;
-
-          // Handle function calls
-          if (aiResponse.type === "function_call") {
-            console.log(`[TG] AI requested ${aiResponse.functionCalls.length} function call(s)`);
+          
+          // Check if we should invoke a tool
+          if (routingDecision.shouldInvokeTool && routingDecision.chosenToolIndex >= 0) {
+            const tool = AVAILABLE_TOOLS[routingDecision.chosenToolIndex];
             
-            // Execute function calls
-            const functionResults = [];
-            for (const call of aiResponse.functionCalls) {
-              console.log(`[TG] Executing function: ${call.name}`);
-              const result = await executeFunctionCall(call.name, call.arguments);
+            // Handle direct response (no tool execution)
+            if (tool.type === "direct") {
+              console.log(`[TG] Direct response - querying OpenAI for conversational reply`);
+              const messages = [
+                {
+                  role: "system",
+                  content: `You are Lumen, SmartLedger Technology's intelligent guide. Context: ${JSON.stringify(contextForModel)}`
+                },
+                {
+                  role: "user",
+                  content: contextPrompt ? `${text}${contextPrompt}` : text
+                }
+              ];
+              const directResponse = await queryOpenAI(text, { context: contextForModel });
+              finalResponse = directResponse.response || directResponse.result || "I'm here to help!";
+            } 
+            // Handle tool execution
+            else {
+              console.log(`[TG] Executing tool: ${tool.name}`);
               
-              // Handle terminal command approval
-              if (result.needsApproval && result.command) {
-                // Create NEW assistant message with ONLY this tool call
-                // (avoids "must respond to all tool_call_ids" error when AI makes multiple calls)
-                // Must match OpenAI's tool_call structure: {id, type, function: {name, arguments}}
-                const singleToolCallMessage = {
-                  role: "assistant",
-                  content: null,
-                  tool_calls: [{
-                    id: call.id,
-                    type: "function",
-                    function: {
-                      name: call.name,
-                      arguments: JSON.stringify(call.arguments)
-                    }
-                  }]
-                };
+              // Add workspace context for terminal commands
+              const toolContext = tool.name === "terminal" 
+                ? { workspacePath: "/home/greg/dev/lumenfriend" }
+                : null;
+              
+              const toolResult = await executeTool(tool, text, toolContext);
+              
+              // Handle terminal approval
+              if (toolResult.needsApproval && toolResult.data?.command) {
+                console.log(`[TG] Terminal command needs approval: ${toolResult.data.command}`);
                 
-                // Store pending command WITH reconstructed context
+                // Store pending command
                 pendingCommands.set(userId, {
-                  command: result.command,
-                  explanation: result.explanation,
+                  command: toolResult.data.command,
+                  explanation: toolResult.data.reasoning,
                   timestamp: Date.now(),
-                  functionCall: call,
-                  messages: messages, // Store messages array for continuation
-                  assistantMessage: singleToolCallMessage // Store NEW message with only 1 tool call
+                  toolResult: toolResult,
+                  routingDecision: routingDecision
                 });
                 
                 // Send approval request
-                const approvalMessage = formatCommandApprovalRequest(result.command, result.explanation);
+                const approvalMessage = `**🖥️ Terminal Command Request**\n\n**Task:** ${toolResult.data.reasoning}\n**Command:** \`${toolResult.data.command}\`\n\n⚠️ **Approval Required** - Reply with:\n• **"yes"** to execute this command\n• **"no"** to cancel\n\nThis command will be executed with restricted permissions in the workspace directory.`;
                 await telegramBot.sendMessage(chatId, approvalMessage);
                 
-                // Don't continue with function execution
+                // Don't continue - wait for approval
                 return;
               }
               
-              functionResults.push({
-                call: call,
-                result: result
-              });
+              // Tool executed successfully - format output
+              finalResponse = formatToolOutput(toolResult, routingDecision);
             }
-
-            // Build response with function results
-            messages.push(aiResponse.message);
-            
-            // Add function results to messages
-            for (const fr of functionResults) {
-              messages.push({
-                role: "tool",
-                tool_call_id: fr.call.id,
-                content: fr.result.formatted || JSON.stringify(fr.result)
-              });
-            }
-
-            // Get final response from AI after function execution
-            const finalAiResponse = await queryOpenAIWithFunctions(messages, functions);
-            finalResponse = finalAiResponse.content || "Tool execution complete.";
-            
-            console.log(`[TG] Function calling complete, final response: ${finalResponse.substring(0, 50)}...`);
           } else {
-            // Regular text response
-            finalResponse = aiResponse.content;
-            console.log(`[TG] Regular response received: ${finalResponse.substring(0, 50)}...`);
+            // No tool selected or shouldn't invoke - just respond conversationally
+            console.log(`[TG] No tool invocation - responding conversationally`);
+            const directResponse = await queryOpenAI(text, { context: contextForModel });
+            finalResponse = directResponse.response || directResponse.result || "I'm here to help!";
           }
+
+          console.log(`[TG] Final response ready: ${finalResponse.substring(0, 50)}...`);
 
           // For Telegram, we'll send the complete response as one message
           // Convert to baseAgent format for compatibility
           const formattedResult = {
             response: finalResponse,
-            responseType: aiResponse.type === "function_call" ? "tool_enhanced" : "conversational"
+            responseType: routingDecision.chosenTool !== "direct-response" ? "tool_enhanced" : "conversational"
           };
 
           const responses = [formattedResult];
