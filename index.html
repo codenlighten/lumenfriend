@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lumen - SmartLedger Chatbot</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --primary-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+      --bg-color: #f3f4f6;
+      --text-main: #1f2937;
+      --text-muted: #6b7280;
+      --user-bubble: #6366f1;
+      --assistant-bubble: #ffffff;
+      --border-color: #e5e7eb;
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      background: #0f172a;
+      background-image: radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0, transparent 50%), 
+                        radial-gradient(at 50% 0%, rgba(168, 85, 247, 0.15) 0, transparent 50%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      color: var(--text-main);
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1000px;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      border-radius: 24px;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      flex-direction: column;
+      height: 90vh;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+
+    /* --- Header --- */
+    .header {
+      background: var(--primary-gradient);
+      color: white;
+      padding: 20px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    }
+
+    .header-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .header-brand h1 {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-brand p {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    .header-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .session-id {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 6px 12px;
+      border-radius: 99px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .memory-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .toggle-checkbox {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #fbbf24;
+    }
+
+    /* --- Chat Area --- */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px;
+      background: #f8fafc;
+      scroll-behavior: smooth;
+    }
+
+    /* Custom Scrollbar */
+    .chat-area::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .chat-area::-webkit-scrollbar-thumb {
+      background: #d1d5db;
+      border-radius: 10px;
+    }
+
+    .chat-area::-webkit-scrollbar-thumb:hover {
+      background: #9ca3af;
+    }
+
+    .message {
+      margin-bottom: 24px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .message-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .message.user .message-avatar {
+      background: var(--user-bubble);
+      color: white;
+    }
+
+    .message.assistant .message-avatar {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+    }
+
+    .message-content {
+      display: flex;
+      flex-direction: column;
+      max-width: 70%;
+      gap: 8px;
+    }
+
+    .message.user .message-content {
+      align-items: flex-end;
+    }
+
+    .message.assistant .message-content {
+      align-items: flex-start;
+    }
+
+    .bubble {
+      padding: 14px 20px;
+      font-size: 15px;
+      line-height: 1.6;
+      position: relative;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+      word-wrap: break-word;
+    }
+
+    .message.user .bubble {
+      background: var(--user-bubble);
+      color: white;
+      border-radius: 20px 20px 4px 20px;
+    }
+
+    .message.assistant .bubble {
+      background: var(--assistant-bubble);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 20px 20px 20px 4px;
+    }
+
+    /* Markdown styling in bubbles */
+    .bubble h1, .bubble h2, .bubble h3 {
+      margin-top: 12px;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .bubble h1 { font-size: 1.4em; }
+    .bubble h2 { font-size: 1.2em; }
+    .bubble h3 { font-size: 1.05em; }
+
+    .bubble p {
+      margin-bottom: 8px;
+    }
+
+    .bubble ul, .bubble ol {
+      margin-left: 16px;
+      margin-bottom: 8px;
+    }
+
+    .bubble li {
+      margin-bottom: 4px;
+    }
+
+    .bubble strong { font-weight: 700; }
+    .bubble em { font-style: italic; }
+
+    .bubble code {
+      background: rgba(0, 0, 0, 0.05);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.9em;
+    }
+
+    .message.assistant .bubble code {
+      background: rgba(99, 102, 241, 0.1);
+      color: #4f46e5;
+    }
+
+    /* --- Metadata & Code --- */
+    .metadata {
+      margin-top: 8px;
+      width: 100%;
+      background: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .metadata-section {
+      margin-bottom: 12px;
+    }
+
+    .metadata-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .metadata-label {
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .metadata-items {
+      margin-left: 12px;
+    }
+
+    .metadata-item {
+      font-size: 13px;
+      padding: 4px 0;
+      color: var(--text-main);
+    }
+
+    .code-block {
+      background: #1e293b;
+      margin-top: 12px;
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .code-block pre {
+      padding: 16px;
+      font-family: 'Fira Code', monospace;
+      font-size: 13px;
+      color: #e2e8f0;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+
+    .response-sequence {
+      margin-bottom: 16px;
+      padding: 12px;
+      background: #fafafa;
+      border-radius: 8px;
+      border-left: 4px solid #6366f1;
+    }
+
+    .response-order {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      letter-spacing: 0.05em;
+    }
+
+    .response-text {
+      line-height: 1.6;
+      color: var(--text-main);
+    }
+
+    .continuation-limit-notice {
+      background: #fef3c7;
+      color: #92400e;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-top: 12px;
+      border-left: 4px solid #f59e0b;
+      font-size: 13px;
+    }
+
+    .personality-version {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      margin-top: 8px;
+      font-weight: 700;
+    }
+
+    /* --- Typing Indicator --- */
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      padding: 14px 20px;
+      background: var(--assistant-bubble);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 20px 20px 20px 4px;
+    }
+
+    .typing-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9ca3af;
+      animation: typing 1.4s infinite;
+    }
+
+    .typing-dot:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .typing-dot:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes typing {
+      0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-10px); }
+    }
+
+    /* --- Input Area --- */
+    .input-area {
+      padding: 24px 32px;
+      background: white;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .input-wrapper {
+      display: flex;
+      background: #f3f4f6;
+      padding: 8px;
+      border-radius: 99px;
+      transition: all 0.2s;
+      border: 2px solid transparent;
+      gap: 8px;
+    }
+
+    .input-wrapper:focus-within {
+      background: white;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+    }
+
+    input[type="text"] {
+      flex: 1;
+      background: transparent;
+      border: none;
+      padding: 8px 16px;
+      font-size: 15px;
+      outline: none;
+      color: var(--text-main);
+    }
+
+    input[type="text"]::placeholder {
+      color: var(--text-muted);
+    }
+
+    button#sendBtn {
+      background: var(--user-bubble);
+      color: white;
+      border: none;
+      padding: 10px 28px;
+      border-radius: 99px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: transform 0.1s, background 0.2s;
+      font-size: 14px;
+    }
+
+    button#sendBtn:hover:not(:disabled) {
+      background: #4f46e5;
+      transform: translateY(-1px);
+    }
+
+    button#sendBtn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    button#sendBtn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .error {
+      background: #fee2e2;
+      color: #991b1b;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      border-left: 4px solid #dc2626;
+      font-size: 14px;
+    }
+
+    /* Mobile responsiveness */
+    @media (max-width: 768px) {
+      .container {
+        border-radius: 12px;
+        max-height: 100vh;
+        height: 100%;
+      }
+
+      .header {
+        padding: 16px 20px;
+      }
+
+      .header h1 {
+        font-size: 18px;
+      }
+
+      .chat-area {
+        padding: 20px;
+      }
+
+      .message-content {
+        max-width: 85%;
+      }
+
+      .input-area {
+        padding: 16px 20px;
+      }
+
+      .header-info {
+        flex-direction: column;
+        gap: 12px;
+        align-items: flex-end;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-brand">
+        <h1><span>✨</span> Lumen</h1>
+        <p>by SmartLedger.technology</p>
+      </div>
+      <div class="header-info">
+        <div class="session-id" id="sessionDisplay">Session: ...</div>
+        <div class="memory-toggle">
+          <input type="checkbox" id="memoryToggle" class="toggle-checkbox" checked>
+          <label for="memoryToggle">Memory</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-area" id="chatArea"></div>
+
+    <div class="input-area">
+      <div class="input-wrapper">
+        <input
+          type="text"
+          id="messageInput"
+          placeholder="Say something to Lumen..."
+          autocomplete="off"
+        >
+        <button id="sendBtn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BASE_URL = window.location.origin;
+    let sessionId = null;
+    let isLoading = false;
+
+    function generateSessionId() {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    function initSession() {
+      sessionId = generateSessionId();
+      document.getElementById('sessionDisplay').textContent = `Session: ${sessionId.substring(0, 8)}...`;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function renderMarkdown(text) {
+      try {
+        let md = marked.parse(text);
+        md = md.replace(/<p>/g, '<p style="margin-bottom: 8px;">');
+        return md;
+      } catch (e) {
+        return escapeHtml(text);
+      }
+    }
+
+    function formatCode(code) {
+      return `<div class="code-block"><pre>${escapeHtml(code)}</pre></div>`;
+    }
+
+    function formatMetadata(result) {
+      if (!result) return '';
+
+      let metadata = '';
+
+      if (result.questionsForUser && result.questions && result.questions.length > 0) {
+        metadata += '<div class="metadata-section">';
+        metadata += '<span class="metadata-label">Questions:</span>';
+        metadata += '<div class="metadata-items">';
+        result.questions.forEach(q => {
+          metadata += `<div class="metadata-item">• ${escapeHtml(q)}</div>`;
+        });
+        metadata += '</div></div>';
+      }
+
+      if (result.missingContext && result.missingContext.length > 0) {
+        metadata += '<div class="metadata-section">';
+        metadata += '<span class="metadata-label">Missing Context:</span>';
+        metadata += '<div class="metadata-items">';
+        result.missingContext.forEach(item => {
+          metadata += `<div class="metadata-item">• ${escapeHtml(item)}</div>`;
+        });
+        metadata += '</div></div>';
+      }
+
+      if (result.continue) {
+        metadata += '<div class="metadata-section">';
+        metadata += '<span class="metadata-label">↻ Continuation needed</span>';
+        metadata += '</div>';
+      }
+
+      if (result.includesCode && result.code) {
+        metadata += formatCode(result.code);
+      }
+
+      if (metadata) {
+        return `<div class="metadata">${metadata}</div>`;
+      }
+
+      return '';
+    }
+
+    function formatMultipleResponses(responses, continuationHitLimit) {
+      if (!Array.isArray(responses) || responses.length === 0) return '';
+      
+      let html = '';
+      responses.forEach((response) => {
+        html += `<div class="response-sequence">`;
+        if (responses.length > 1) {
+          html += `<div class="response-order">Response ${response.order}</div>`;
+        }
+        html += `<div class="response-text">${renderMarkdown(response.response)}</div>`;
+        html += formatMetadata(response);
+        html += `</div>`;
+      });
+
+      if (continuationHitLimit) {
+        html += '<div class="continuation-limit-notice">⚠️ Response chain reached maximum iterations (10) — there may be more to say.</div>';
+      }
+
+      return html;
+    }
+
+    function displayPersonalityUpdate(personality) {
+      if (!personality) return '';
+      return `<div class="personality-version">Lumen v${personality.version}</div>`;
+    }
+
+    function addMessage(text, isUser) {
+      const chatArea = document.getElementById('chatArea');
+      const message = document.createElement('div');
+      message.className = `message ${isUser ? 'user' : 'assistant'}`;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = isUser ? 'U' : 'L';
+
+      const content = document.createElement('div');
+      content.className = 'message-content';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = isUser ? escapeHtml(text) : renderMarkdown(text);
+
+      content.appendChild(bubble);
+
+      if (isUser) {
+        message.appendChild(content);
+        message.appendChild(avatar);
+      } else {
+        message.appendChild(avatar);
+        message.appendChild(content);
+      }
+
+      chatArea.appendChild(message);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function addTypingIndicator() {
+      const chatArea = document.getElementById('chatArea');
+      const message = document.createElement('div');
+      message.className = 'message assistant';
+      message.id = 'typing-indicator';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = 'L';
+
+      const content = document.createElement('div');
+      content.className = 'message-content';
+
+      const typingDiv = document.createElement('div');
+      typingDiv.className = 'typing-indicator';
+      typingDiv.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+
+      content.appendChild(typingDiv);
+
+      message.appendChild(avatar);
+      message.appendChild(content);
+
+      chatArea.appendChild(message);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function removeTypingIndicator() {
+      const indicator = document.getElementById('typing-indicator');
+      if (indicator) {
+        indicator.remove();
+      }
+    }
+
+    function addMultipleResponses(responses, continuationHitLimit, personality = null) {
+      removeTypingIndicator();
+      
+      const chatArea = document.getElementById('chatArea');
+      const message = document.createElement('div');
+      message.className = 'message assistant';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = 'L';
+
+      const content = document.createElement('div');
+      content.className = 'message-content';
+
+      const responseHtml = formatMultipleResponses(responses, continuationHitLimit);
+      const responseDiv = document.createElement('div');
+      responseDiv.innerHTML = responseHtml;
+
+      content.appendChild(responseDiv);
+
+      if (personality) {
+        const versionDiv = document.createElement('div');
+        versionDiv.className = 'personality-version';
+        versionDiv.textContent = `Lumen v${personality.version}`;
+        content.appendChild(versionDiv);
+      }
+
+      message.appendChild(avatar);
+      message.appendChild(content);
+
+      chatArea.appendChild(message);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const message = input.value.trim();
+
+      if (!message || isLoading) return;
+
+      isLoading = true;
+      document.getElementById('sendBtn').disabled = true;
+
+      addMessage(message, true);
+      addTypingIndicator();
+      input.value = '';
+
+      try {
+        const memoryEnabled = document.getElementById('memoryToggle').checked;
+        const response = await fetch(`${BASE_URL}/api/lumen`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            message,
+            memory: memoryEnabled,
+            context: {
+              source: 'web-chat',
+              interface: 'index.html'
+            }
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const envelope = await response.json();
+        const data = envelope.data || {};
+
+        if (data.responses && Array.isArray(data.responses)) {
+          addMultipleResponses(data.responses, data.continuationHitLimit, data.personality);
+        } else {
+          throw new Error('Invalid response format');
+        }
+
+        if (data.sessionId && data.sessionId !== sessionId) {
+          sessionId = data.sessionId;
+          document.getElementById('sessionDisplay').textContent = `Session: ${sessionId.substring(0, 8)}...`;
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        removeTypingIndicator();
+        const chatArea = document.getElementById('chatArea');
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error';
+        errorDiv.textContent = `Error: ${error.message}`;
+        chatArea.appendChild(errorDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+      } finally {
+        isLoading = false;
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('messageInput').focus();
+      }
+    }
+
+    document.getElementById('messageInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && !isLoading) {
+        sendMessage();
+      }
+    });
+
+    initSession();
+    document.getElementById('messageInput').focus();
+  </script>
+</body>
+</html>

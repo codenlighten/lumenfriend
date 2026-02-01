@@ -1,0 +1,31 @@
+{
+  "name": "lumenfriend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "chat": "node sessionChat.js",
+    "start": "node server.js",
+    "generate-keys": "node scripts/generate-keys.js",
+    "generate-personality-schema": "node scripts/generate-personality-schema.js",
+    "test-schema": "node scripts/test-schema.js",
+    "test-endpoints": "node scripts/test-endpoints.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@smartledger/bsv": "^3.4.0",
+    "@smartledger/keys": "^2.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "form-data": "^4.0.1",
+    "openai": "^6.17.0"
+  }
+}
