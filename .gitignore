@@ -9,6 +9,9 @@ sessions/
 .env
 .env.local
 
+# Private keys (NEVER COMMIT)
+.keys/
+
 # Deployment artifacts
 *.tar.gz
 
