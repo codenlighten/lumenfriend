@@ -1388,14 +1388,22 @@ Context: ${JSON.stringify(contextForModel)}`
               
               // Handle terminal command approval
               if (result.needsApproval && result.command) {
-                // Store pending command WITH full context for proper OpenAI flow
+                // Create NEW assistant message with ONLY this tool call
+                // (avoids "must respond to all tool_call_ids" error when AI makes multiple calls)
+                const singleToolCallMessage = {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [call] // Only include THIS tool call
+                };
+                
+                // Store pending command WITH reconstructed context
                 pendingCommands.set(userId, {
                   command: result.command,
                   explanation: result.explanation,
                   timestamp: Date.now(),
                   functionCall: call,
                   messages: messages, // Store messages array for continuation
-                  assistantMessage: aiResponse.message // Store assistant message with tool_calls
+                  assistantMessage: singleToolCallMessage // Store NEW message with only 1 tool call
                 });
                 
                 // Send approval request
