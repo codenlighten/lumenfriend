@@ -45,7 +45,8 @@ import { loadUserStats, saveUserStats, recordInteraction } from "./lib/statsTrac
 import { detectContinuity, extractPreviousContext, buildContextPrompt } from "./lib/contextThreading.js";
 import { getTeachingContext, loadTeachingHistory } from "./lib/teachingEngine.js";
 import { hasAccess, getAccessDeniedMessage } from "./lib/accessControl.js";
-import { getFunctionDefinitions, executeFunctionCall } from "./lib/functionCalling.js";
+import { getFunctionDefinitions, executeFunctionCall, formatCommandApprovalRequest } from "./lib/functionCalling.js";
+import { validateCommand, executeCommand, formatExecutionResult } from "./lib/terminalExecutor.js";
 
 dotenv.config();
 
@@ -55,6 +56,9 @@ const port = Number(process.env.PORT) || 3000;
 const PERSONALITY_ANCHOR_STORE = "./.personality-anchors.json";
 const LUMEN_MEMORY_DIR = resolve(process.cwd(), "sessions", "lumen");
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+// Store pending terminal commands for approval
+const pendingCommands = new Map(); // userId -> { command, explanation, timestamp }
 
 let telegramBot = null;
 if (TELEGRAM_BOT_TOKEN) {
@@ -1226,6 +1230,65 @@ Type your question below and I'll respond!`;
 
           // Regular message - send to Lumen
           console.log(`[TG] Processing regular message from user ${userId}`);
+          
+          // Check for pending command approval
+          const pending = pendingCommands.get(userId);
+          if (pending) {
+            const textLower = text.toLowerCase().trim();
+            
+            if (textLower === 'yes' || textLower === 'y') {
+              console.log(`[TG] User approved command: ${pending.command}`);
+              pendingCommands.delete(userId);
+              
+              // Execute the command
+              const execResult = await executeCommand(userId, pending.command);
+              const formattedResult = formatExecutionResult(execResult);
+              
+              // Send execution result
+              await telegramBot.sendMessage(chatId, formattedResult);
+              
+              // If successful, continue with function calling flow
+              if (execResult.success) {
+                // Add the tool response to messages and get final AI response
+                const messages = [
+                  {
+                    role: "system",
+                    content: `You are Lumen, an AI assistant. You just executed a terminal command and received output. Explain the results to the user.`
+                  },
+                  {
+                    role: "user",
+                    content: pending.explanation
+                  },
+                  {
+                    role: "tool",
+                    tool_call_id: pending.functionCall?.id || "terminal_exec",
+                    content: execResult.stdout || "(no output)"
+                  }
+                ];
+                
+                const functions = getFunctionDefinitions();
+                const finalAiResponse = await queryOpenAIWithFunctions(messages, functions);
+                const finalResponse = finalAiResponse.content || "Command executed successfully.";
+                
+                await telegramBot.sendMessage(chatId, finalResponse);
+              }
+              
+              return;
+              
+            } else if (textLower === 'no' || textLower === 'n') {
+              console.log(`[TG] User rejected command: ${pending.command}`);
+              pendingCommands.delete(userId);
+              
+              await telegramBot.sendMessage(chatId, "❌ Command cancelled.");
+              return;
+              
+            } else {
+              // User sent something else - remind them
+              await telegramBot.sendMessage(chatId, `⏳ You have a pending command approval. Please reply with **"yes"** or **"no"**.\n\n**Command:** \`${pending.command}\``);
+              return;
+            }
+          }
+          
           await addTelegramInteraction(userId, session, { role: "user", text });
 
           // Detect conversation continuity
@@ -1303,6 +1366,25 @@ Context: ${JSON.stringify(contextForModel)}`
             for (const call of aiResponse.functionCalls) {
               console.log(`[TG] Executing function: ${call.name}`);
               const result = await executeFunctionCall(call.name, call.arguments);
+              
+              // Handle terminal command approval
+              if (result.needsApproval && result.command) {
+                // Store pending command
+                pendingCommands.set(userId, {
+                  command: result.command,
+                  explanation: result.explanation,
+                  timestamp: Date.now(),
+                  functionCall: call
+                });
+                
+                // Send approval request
+                const approvalMessage = formatCommandApprovalRequest(result.command, result.explanation);
+                await telegramBot.sendMessage(chatId, approvalMessage);
+                
+                // Don't continue with function execution
+                return;
+              }
+              
               functionResults.push({
                 call: call,
                 result: result

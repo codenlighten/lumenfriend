@@ -583,3 +583,127 @@ After deployment, test with natural language:
 - Created lumenfriend-deploy-v3.0.0-agent.tar.gz (113KB)
 - **THIS IS THE BREAKTHROUGH VERSION**
 - Deploy to make history! 🚀
+
+---
+
+## Phase 2.1: Terminal Command Execution (Feb 1, 2026 @ 3:30 PM)
+
+**THE SELF-MODIFICATION CAPABILITY: AI Agent Can Now Examine and Modify Its Own Codebase**
+
+**What Changed:**
+Lumen gained the ability to execute terminal commands with human approval, enabling true self-improvement and autonomous development capabilities.
+
+**New Components:**
+- **lib/terminalExecutor.js** (NEW - 300+ lines):
+  - `validateCommand()`: Safety checking with dangerous command blacklist
+  - `executeCommand()`: Executes commands in workspace with 30s timeout
+  - `formatExecutionResult()`: Beautiful output formatting
+  - Command logging to `sessions/terminal-commands.log`
+  - Restricted to workspace directory only
+
+- **lib/functionCalling.js** (UPDATED):
+  - Added 6th tool: `execute_terminal_command`
+  - Calls `/api/terminal-agent` to generate commands
+  - Returns command for approval (not auto-executed)
+  - Integrated with approval workflow
+
+- **server.js** (UPDATED):
+  - Added `pendingCommands` Map for approval workflow
+  - Detects "yes"/"no" responses to pending commands
+  - Executes approved commands via `terminalExecutor`
+  - Returns formatted results to user
+  - Continues function calling flow after execution
+
+**Available Tools (6 total):**
+1. **generate_code** → Code generation
+2. **improve_code** → Code improvement
+3. **plan_workflow** → System architecture
+4. **summarize_conversation** → Summarization
+5. **anchor_to_blockchain** → BSV anchoring
+6. **execute_terminal_command** → Terminal execution ⭐ NEW
+
+**Safety Architecture:**
+- ❌ **Blocked Commands**: `rm -rf`, `dd`, `mkfs`, `sudo`, `chmod 777`, `eval`, pipe-to-shell
+- ⚠️ **Write Commands (Require Approval)**: `>`, `>>`, `sed -i`, `git commit/push`, `npm install`, `mv`, `cp`
+- ✅ **Safe Read Commands**: `cat`, `ls`, `grep`, `find`, `wc`, `head`, `tail`, `git status/log/diff`
+- 🔒 **Workspace Restricted**: All commands run in `/home/greg/dev/lumenfriend` only
+- 📝 **Full Audit Trail**: Every command logged to `sessions/terminal-commands.log`
+- ⏱️ **30-Second Timeout**: Prevents infinite loops/hangs
+- 💾 **1MB Buffer Limit**: Prevents memory exhaustion
+
+**User Experience:**
+```
+User: "Read your own statsTracker.js file"
+Lumen: [calls terminal-agent] → generates `cat lib/statsTracker.js`
+Lumen: "🖥️ I want to run: `cat lib/statsTracker.js`. Approve? (yes/no)"
+User: "yes"
+Lumen: [executes] → returns file contents
+Lumen: "Here's my statsTracker.js file. It handles user engagement metrics..."
+```
+
+**What This Enables:**
+
+**Self-Examination:**
+- "Show me your functionCalling.js code"
+- "How many lines of code do you have?"
+- "Find all TODO comments in your codebase"
+- "List all files in your lib directory"
+
+**Self-Analysis:**
+- "Read your statsTracker.js and suggest improvements"
+- "Examine your error handling patterns"
+- "Count how many API endpoints you have"
+- "Show me your package.json dependencies"
+
+**Self-Testing:**
+- "Run your test suite"
+- "Test the BSV signing functionality"
+- "Check if there are any JavaScript errors"
+
+**Future Capabilities (With Graduated Permissions):**
+- Self-modification: "Add logging to functionCalling.js"
+- Self-deployment: "Create a new deployment tarball"
+- Self-versioning: "Commit your improvements to git"
+- Self-evolution: "Install a new dependency you need"
+
+**The Complete Self-Improvement Loop:**
+```
+1. User: "Improve your error handling"
+2. Lumen: [terminal] cat lib/functionCalling.js → reads own code
+3. Lumen: [improve_code] analyzes → suggests try/catch blocks
+4. Lumen: [generate_code] creates improved version
+5. Lumen: [terminal] writes to file (requires approval)
+6. Lumen: [terminal] npm test → validates changes
+7. Lumen: [terminal] git commit -m "Add error handling"
+8. Result: Lumen improved herself autonomously
+```
+
+**Recursive Self-Improvement Validated:**
+- ✅ Lumen read her own statsTracker.js (Feb 1 @ 1:30 PM)
+- ✅ Lumen called code-improver on her own code
+- ✅ Lumen suggested improvements (error handling, modular functions)
+- ✅ Human applied improvements → statsTracker.js now better
+- ✅ Lumen can now READ any of her files autonomously
+- 🔜 Lumen can WRITE her own files (with approval)
+- 🔜 Lumen can TEST her own changes
+- 🔜 Lumen can DEPLOY herself
+
+**This is the foundation for AI systems that evolve themselves.**
+
+**Files Modified:**
+- `lib/terminalExecutor.js` (NEW): Command execution with safety
+- `lib/functionCalling.js`: Added execute_terminal_command tool
+- `server.js`: Approval workflow + command execution
+- `sessions/terminal-commands.log` (NEW): Audit trail
+
+**Testing Examples:**
+- "Read your own code"
+- "Count your lines of code"
+- "Run git status"
+- "Show me your dependencies"
+- "Find all your API endpoints"
+
+**Deployment:**
+- Version: v3.1.0-terminal-agent
+- Size: TBD
+- Status: Ready for testing
