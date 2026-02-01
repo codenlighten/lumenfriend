@@ -1271,11 +1271,25 @@ Type your question below and I'll respond!`;
                   content: execResult.stdout || "(no output)"
                 });
                 
+                // Save the command output to session for context continuity
+                await addTelegramInteraction(userId, session, {
+                  role: "assistant",
+                  text: `[Terminal Command Executed: ${pending.command}]\n\nOutput:\n${execResult.stdout}`
+                });
+                
                 const functions = getFunctionDefinitions();
                 const finalAiResponse = await queryOpenAIWithFunctions(continuedMessages, functions);
                 const finalResponse = finalAiResponse.content || "Command executed successfully.";
                 
-                await telegramBot.sendMessage(chatId, finalResponse);
+                // Save AI explanation to session
+                await addTelegramInteraction(userId, session, {
+                  role: "assistant",
+                  text: finalResponse
+                });
+                
+                // Use chunked message sending for long responses
+                const messages = telegramBot.formatTelegramResponse(finalResponse);
+                await telegramBot.sendMultipleMessages(chatId, messages);
               }
               
               return;
