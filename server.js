@@ -1390,10 +1390,18 @@ Context: ${JSON.stringify(contextForModel)}`
               if (result.needsApproval && result.command) {
                 // Create NEW assistant message with ONLY this tool call
                 // (avoids "must respond to all tool_call_ids" error when AI makes multiple calls)
+                // Must match OpenAI's tool_call structure: {id, type, function: {name, arguments}}
                 const singleToolCallMessage = {
                   role: "assistant",
                   content: null,
-                  tool_calls: [call] // Only include THIS tool call
+                  tool_calls: [{
+                    id: call.id,
+                    type: "function",
+                    function: {
+                      name: call.name,
+                      arguments: JSON.stringify(call.arguments)
+                    }
+                  }]
                 };
                 
                 // Store pending command WITH reconstructed context
