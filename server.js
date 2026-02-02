@@ -1302,14 +1302,19 @@ Type your question below and I'll respond!`;
             console.log(`[TG] Context prompt injected (${contextPrompt.length} chars)`);
           }
 
-          // Get Lumen's response
-          console.log(`[TG] Querying OpenAI for user ${userId}`);
-          const queryOptions = { schema: baseAgentResponseSchema };
+          // Get Lumen's response using universal agent
+          console.log(`[TG] Querying OpenAI for user ${userId} with universal agent`);
+          const queryOptions = { schema: baseAgentExtendedResponseSchema };
           const contextForModel = {
             ...buildTelegramContext(session),
             agent: {
               name: "Lumen",
               description: "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
+            },
+            instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+            workspace: {
+              path: process.cwd(),
+              available: true
             },
             platform: "telegram"
           };
@@ -1320,11 +1325,11 @@ Type your question below and I'll respond!`;
           const queryText = contextPrompt ? `${text}${contextPrompt}` : text;
 
           const initialResult = await queryOpenAI(queryText, queryOptions);
-          console.log(`[TG] Initial response received: ${initialResult.response.substring(0, 50)}...`);
+          console.log(`[TG] Initial response received: choice=${initialResult.choice}`);
 
           // Chain responses if needed
           const chainingOptions = {
-            schema: baseAgentResponseSchema,
+            schema: baseAgentExtendedResponseSchema,
             context: contextForModel
           };
 
@@ -1333,7 +1338,7 @@ Type your question below and I'll respond!`;
             chainingOptions,
             async (chainContext) => {
               return await queryOpenAI(text, {
-                schema: baseAgentResponseSchema,
+                schema: baseAgentExtendedResponseSchema,
                 context: chainContext
               });
             }
@@ -1341,32 +1346,46 @@ Type your question below and I'll respond!`;
 
           console.log(`[TG] Response chaining complete: ${responses.length} responses, ${totalIterations} iterations, limit_hit=${continuationHitLimit}`);
 
-          // Deduplicate responses to prevent sending the same thing twice
-          const uniqueResponses = [];
+          // Format responses based on choice type
+          const formattedResponses = [];
           const seenTexts = new Set();
-          
-          // For Telegram, limit to first 1-2 responses to avoid flooding with similar messages
           const maxResponsesForTelegram = 1;
           let responsesAdded = 0;
           
           for (const resp of responses) {
-            const text = resp.response.trim();
-            if (!seenTexts.has(text) && responsesAdded < maxResponsesForTelegram) {
-              uniqueResponses.push(resp);
-              seenTexts.add(text);
+            let formattedText = "";
+            
+            switch (resp.choice) {
+              case "response":
+                formattedText = resp.response;
+                break;
+              case "code":
+                formattedText = `💻 <b>${resp.language.toUpperCase()} Code:</b>\n\n<pre>${resp.code}</pre>\n\n${resp.codeExplanation}`;
+                break;
+              case "terminalCommand":
+                formattedText = `🔧 <b>Terminal Command:</b>\n\n<code>${resp.terminalCommand}</code>\n\n${resp.commandReasoning}${resp.requiresApproval ? '\n\n⚠️ This command requires approval before execution.' : ''}`;
+                break;
+              default:
+                formattedText = JSON.stringify(resp);
+            }
+            
+            const textKey = formattedText.trim();
+            if (!seenTexts.has(textKey) && responsesAdded < maxResponsesForTelegram) {
+              formattedResponses.push({ ...resp, formattedText });
+              seenTexts.add(textKey);
               responsesAdded++;
-              console.log(`[TG] Added response ${responsesAdded}/${maxResponsesForTelegram} (${text.length} chars)`);
-            } else if (seenTexts.has(text)) {
-              console.log(`[TG] Skipped exact duplicate response (${text.length} chars)`);
+              console.log(`[TG] Added ${resp.choice} response ${responsesAdded}/${maxResponsesForTelegram} (${formattedText.length} chars)`);
+            } else if (seenTexts.has(textKey)) {
+              console.log(`[TG] Skipped exact duplicate response (${formattedText.length} chars)`);
             } else {
-              console.log(`[TG] Skipped response (hit max ${maxResponsesForTelegram} for Telegram, original was ${responses.length})`);
+              console.log(`[TG] Skipped response (hit max ${maxResponsesForTelegram} for Telegram)`);
             }
           }
 
-          console.log(`[TG] After deduplication: ${uniqueResponses.length} responses for Telegram (was ${responses.length} from chaining)`);
+          console.log(`[TG] After deduplication: ${formattedResponses.length} responses for Telegram (was ${responses.length} from chaining)`);
 
           // Store all responses in session
-          const responsesText = uniqueResponses.map(r => r.response).join("\n\n---\n\n");
+          const responsesText = formattedResponses.map(r => r.formattedText).join("\n\n---\n\n");
           await addTelegramInteraction(userId, session, { role: "ai", text: responsesText });
           console.log(`[TG] Session updated with combined response (${responsesText.length} chars)`);
 
@@ -1378,10 +1397,10 @@ Type your question below and I'll respond!`;
           // Format and send responses - only send if we have unique ones
           let totalMessagesSent = 0;
           
-          if (uniqueResponses.length > 0) {
+          if (formattedResponses.length > 0) {
             // For Telegram, combine all responses into ONE message to avoid flooding
-            const combinedResponse = uniqueResponses.map(r => r.response).join("\n\n");
-            console.log(`[TG] Combining ${uniqueResponses.length} responses into single message (${combinedResponse.length} chars)`);
+            const combinedResponse = formattedResponses.map(r => r.formattedText).join("\n\n");
+            console.log(`[TG] Combining ${formattedResponses.length} responses into single message (${combinedResponse.length} chars)`);
             
             const messages = telegramBot.formatTelegramResponse(combinedResponse);
             console.log(`[TG] Combined response formatted into ${messages.length} message(s)`);
