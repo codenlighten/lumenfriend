@@ -1,5 +1,47 @@
 # Project Status
 
+## Latest Update - v4.0.0: Universal Agent Architecture (February 2, 2026)
+
+### Major Architectural Shift
+Replaced specialized agent routing with **Universal Agent** using `baseAgentExtended` schema:
+- **Single schema** handles all response types via `choice` field
+- **choice: "response"** → Conversational responses with questions/context tracking
+- **choice: "code"** → Code generation with language detection and explanations
+- **choice: "terminalCommand"** → System commands with reasoning and approval flags
+
+### Removed Complexity (Net -1,218 lines)
+- ❌ Deleted `lib/toolRouter.js` (228 lines) - No longer needed
+- ❌ Deleted `lib/functionCalling.js` (356 lines) - OpenAI function calling removed
+- ❌ Deleted `lib/terminalExecutor.js` - Replaced by choice-based approach
+- ✅ Created `schemas/baseAgentExtended.js` (82 lines) - Universal agent schema
+
+### Implementation
+- **Both endpoints unified**: `/api/lumen` and Telegram webhook use `baseAgentExtended`
+- **Intelligent formatting**: Response type determines display (emoji indicators, code blocks, command boxes)
+- **Conditional validation**: OpenAI strict mode ensures only relevant fields populated
+- **Workspace context**: Dynamic `process.cwd()` for Docker compatibility
+
+### Benefits
+1. **Simpler architecture**: One schema instead of routing layer + multiple agents
+2. **Fewer API calls**: AI makes choice directly (no routing decision overhead)
+3. **Better UX**: Formatted responses with type-specific styling
+4. **Easier maintenance**: Single schema to evolve vs multiple specialized schemas
+5. **Self-aware agent**: AI explicitly chooses response format based on context
+
+### Testing Validated
+- ✅ Conversation: "What is SmartLedger?" → choice: "response"
+- ✅ Code generation: "Write fibonacci function" → choice: "code" (Python)
+- ✅ File operations: "Show me package.json" → choice: "terminalCommand" (cat)
+- ✅ Listing: "List JS files in lib" → choice: "terminalCommand" (ls with glob)
+
+### Deployment Ready
+- **Version**: v4.0.0-universal-agent
+- **Tarball**: `lumenfriend-deploy-v4.0.0-universal-agent.tar.gz` (764KB)
+- **Commits**: 0eba06b (Telegram), c05bc36 (/api/lumen)
+- **GitHub**: Pushed to `origin/main`
+
+---
+
 ## Components
 - openaiWrapper.js: Added a local test script for baseAgent schema validation.
 - baseAgent.js: Fixed schema required fields and added `questions` items.
