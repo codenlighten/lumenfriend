@@ -566,7 +566,7 @@ app.post("/api/lumen", async (req, res) => {
         
         // Add workspace context for terminal commands
         const toolContext = tool.name === "terminal" 
-          ? { workspacePath: "/home/greg/dev/lumenfriend" }
+          ? { workspacePath: process.cwd() }
           : null;
         
         const toolResult = await executeTool(tool, message, toolContext);
@@ -1427,7 +1427,7 @@ Type your question below and I'll respond!`;
               
               // Add workspace context for terminal commands
               const toolContext = tool.name === "terminal" 
-                ? { workspacePath: "/home/greg/dev/lumenfriend" }
+                ? { workspacePath: process.cwd() }
                 : null;
               
               const toolResult = await executeTool(tool, text, toolContext);
