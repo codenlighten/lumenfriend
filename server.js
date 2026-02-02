@@ -6,7 +6,6 @@ import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { queryOpenAI } from "./lib/openaiWrapper.js";
 import { loadSession, saveSession, addInteraction, buildContext } from "./lib/memoryStore.js";
-import { routeToTool, executeTool, formatToolOutput, AVAILABLE_TOOLS } from "./lib/toolRouter.js";
 import { getSession, touchSession, startCleanupTimer } from "./lib/sessionMap.js";
 import { encryptJson } from "./lib/encryption.js";
 import { publishText } from "./lib/simpleBsvClient.js";
@@ -21,8 +20,8 @@ import { codeGeneratorResponseSchema } from "./schemas/codeGenerator.js";
 import { codeImproverResponseSchema } from "./schemas/codeImprover.js";
 import { workflowPlannerSchema } from "./schemas/workflowPlanner.js";
 import { summarizeAgentResponseSchema } from "./schemas/summarizeAgent.js";
-import { terminalAgentResponseSchema } from "./schemas/terminalAgent.js";
 import { baseAgentResponseSchema } from "./schemas/baseAgent.js";
+import { baseAgentExtendedResponseSchema } from "./schemas/baseAgentExtended.js";
 import { lumenPersonality } from "./lib/lumenPersonality.js";
 import { whoAmI, evolvePersonality } from "./lib/personalityEvolver.js";
 import { chainResponses } from "./lib/responseChainer.js";
@@ -46,7 +45,6 @@ import { loadUserStats, saveUserStats, recordInteraction } from "./lib/statsTrac
 import { detectContinuity, extractPreviousContext, buildContextPrompt } from "./lib/contextThreading.js";
 import { getTeachingContext, loadTeachingHistory } from "./lib/teachingEngine.js";
 import { hasAccess, getAccessDeniedMessage } from "./lib/accessControl.js";
-import { validateCommand, executeCommand, formatExecutionResult } from "./lib/terminalExecutor.js";
 
 dotenv.config();
 
@@ -56,9 +54,6 @@ const port = Number(process.env.PORT) || 3000;
 const PERSONALITY_ANCHOR_STORE = "./.personality-anchors.json";
 const LUMEN_MEMORY_DIR = resolve(process.cwd(), "sessions", "lumen");
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
-// Store pending terminal commands for approval
-const pendingCommands = new Map(); // userId -> { command, explanation, timestamp }
 
 let telegramBot = null;
 if (TELEGRAM_BOT_TOKEN) {
@@ -91,7 +86,6 @@ function getAgentName(pathname) {
   if (pathname.startsWith("/api/code-improver")) return "code-improver";
   if (pathname.startsWith("/api/workflow-planner")) return "workflow-planner";
   if (pathname.startsWith("/api/summarize")) return "summarize";
-  if (pathname.startsWith("/api/terminal-agent")) return "terminal-agent";
   if (pathname.startsWith("/api/lumen")) return "lumen";
   if (pathname.startsWith("/api/anchors")) return "anchors";
   if (pathname.startsWith("/api/recall")) return "recall";
@@ -441,13 +435,6 @@ app.post("/api/summarize", (req, res) =>
   })
 );
 
-app.post("/api/terminal-agent", (req, res) =>
-  handleSchemaEndpoint(req, res, {
-    schema: terminalAgentResponseSchema,
-    logLabel: "/api/terminal-agent"
-  })
-);
-
 app.post("/api/lumen", async (req, res) => {
   try {
     const {
@@ -486,7 +473,7 @@ app.post("/api/lumen", async (req, res) => {
     const memoryEnabled = memory !== false;
     const personalitySnapshot = getLumenPersonalitySnapshot();
 
-    const queryOptions = { schema: baseAgentResponseSchema };
+    const queryOptions = { schema: baseAgentExtendedResponseSchema };
     if (model) {
       queryOptions.model = model;
     }
@@ -516,6 +503,11 @@ app.post("/api/lumen", async (req, res) => {
           description:
             "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
         },
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        workspace: {
+          path: process.cwd(),
+          available: true
+        },
         request: {
           sessionId,
           memoryEnabled: true
@@ -531,6 +523,11 @@ app.post("/api/lumen", async (req, res) => {
           description:
             "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
         },
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        workspace: {
+          path: process.cwd(),
+          available: true
+        },
         request: {
           sessionId,
           memoryEnabled: false
@@ -544,64 +541,12 @@ app.post("/api/lumen", async (req, res) => {
 
     queryOptions.context = contextForModel;
 
-    // NEW: Use tool router to check if we should invoke a tool
-    console.log(`[API/lumen] Routing query to best tool`);
-    const routingDecision = await routeToTool(message, contextForModel);
-    console.log(`[API/lumen] Chosen tool: ${routingDecision.chosenTool} (${routingDecision.reasoning})`);
-
-    let initialResult;
-
-    // Check if we should invoke a tool
-    if (routingDecision.shouldInvokeTool && routingDecision.chosenToolIndex >= 0) {
-      const tool = AVAILABLE_TOOLS[routingDecision.chosenToolIndex];
-      
-      // Handle direct response (no tool execution)
-      if (tool.type === "direct") {
-        console.log(`[API/lumen] Direct response - querying OpenAI`);
-        initialResult = await queryOpenAI(message, queryOptions);
-      } 
-      // Handle tool execution
-      else {
-        console.log(`[API/lumen] Executing tool: ${tool.name}`);
-        
-        // Add workspace context for terminal commands
-        const toolContext = tool.name === "terminal" 
-          ? { workspacePath: process.cwd() }
-          : null;
-        
-        const toolResult = await executeTool(tool, message, toolContext);
-        
-        // For API endpoint, we can't request approval - just return the command
-        if (toolResult.needsApproval) {
-          return res.json({
-            sessionId,
-            needsApproval: true,
-            tool: tool.name,
-            command: toolResult.data?.command,
-            reasoning: toolResult.data?.reasoning,
-            routingDecision: routingDecision
-          });
-        }
-        
-        // Tool executed successfully - format as baseAgent response
-        const formattedOutput = formatToolOutput(toolResult, routingDecision);
-        initialResult = {
-          response: formattedOutput,
-          continue: false,
-          responseType: "tool_enhanced",
-          toolUsed: tool.name,
-          toolData: toolResult.data
-        };
-      }
-    } else {
-      // No tool selected - respond conversationally
-      console.log(`[API/lumen] No tool invocation - conversational response`);
-      initialResult = await queryOpenAI(message, queryOptions);
-    }
+    // Get initial response from universal agent
+    const initialResult = await queryOpenAI(message, queryOptions);
 
     // Chain responses if continue is true (up to 10 iterations)
     const chainingOptions = {
-      schema: baseAgentResponseSchema,
+      schema: baseAgentExtendedResponseSchema,
       model: queryOptions.model,
       temperature: queryOptions.temperature,
       context: contextForModel
@@ -612,7 +557,7 @@ app.post("/api/lumen", async (req, res) => {
       chainingOptions,
       async (chainContext) => {
         return await queryOpenAI(message, {
-          schema: baseAgentResponseSchema,
+          schema: baseAgentExtendedResponseSchema,
           model: queryOptions.model,
           temperature: queryOptions.temperature,
           context: {
@@ -622,16 +567,57 @@ app.post("/api/lumen", async (req, res) => {
       }
     );
 
+    // Format responses based on choice
+    const formattedResponses = responses.map(r => {
+      switch (r.choice) {
+        case "response":
+          return {
+            type: "response",
+            choice: r.choice,
+            response: r.response,
+            questionsForUser: r.questionsForUser,
+            missingContext: r.missingContext,
+            continue: r.continue
+          };
+        case "code":
+          return {
+            type: "code",
+            choice: r.choice,
+            language: r.language,
+            code: r.code,
+            codeExplanation: r.codeExplanation,
+            continue: r.continue
+          };
+        case "terminalCommand":
+          return {
+            type: "terminalCommand",
+            choice: r.choice,
+            command: r.terminalCommand,
+            reasoning: r.commandReasoning,
+            requiresApproval: r.requiresApproval,
+            continue: r.continue
+          };
+        default:
+          return r;
+      }
+    });
+
     if (memoryEnabled && session && sessionPath) {
-      // Add all responses to interaction history
-      const responsesText = responses.map(r => r.response).join("\n\n---\n\n");
+      // Add all responses to interaction history with appropriate formatting
+      const responsesText = formattedResponses.map(r => {
+        if (r.type === "response") return r.response;
+        if (r.type === "code") return `[Code: ${r.language}]\n${r.code}\n\n${r.codeExplanation}`;
+        if (r.type === "terminalCommand") return `[Terminal: ${r.command}]\n${r.reasoning}`;
+        return JSON.stringify(r);
+      }).join("\n\n---\n\n");
+      
       await addInteraction(session, { role: "ai", text: responsesText }, { summariesLimit: 3 });
       await saveSession(sessionPath, session);
 
       return res.json({
         sessionId,
         memory: true,
-        responses,
+        responses: formattedResponses,
         continuationHitLimit,
         totalIterations,
         personality: session.personality,
@@ -643,7 +629,7 @@ app.post("/api/lumen", async (req, res) => {
     return res.json({
       sessionId,
       memory: false,
-      responses,
+      responses: formattedResponses,
       continuationHitLimit,
       totalIterations,
       personality: personalitySnapshot
@@ -1290,71 +1276,6 @@ Type your question below and I'll respond!`;
 
           // Regular message - send to Lumen
           console.log(`[TG] Processing regular message from user ${userId}`);
-          
-          // Check for pending command approval
-          const pending = pendingCommands.get(userId);
-          if (pending) {
-            const textLower = text.toLowerCase().trim();
-            
-            if (textLower === 'yes' || textLower === 'y') {
-              console.log(`[TG] User approved command: ${pending.command}`);
-              pendingCommands.delete(userId);
-              
-              // Execute the command
-              const execResult = await executeCommand(userId, pending.command);
-              const formattedResult = formatExecutionResult(execResult);
-              
-              // Send execution result
-              await telegramBot.sendMessage(chatId, formattedResult);
-              
-              // If successful, save output and format for user
-              if (execResult.success) {
-                // Save the command output to session for context continuity
-                await addTelegramInteraction(userId, session, {
-                  role: "assistant",
-                  text: `[Terminal Command Executed: ${pending.command}]\n\nOutput:\n${execResult.stdout}`
-                });
-                
-                // Format the tool output for user
-                const toolOutput = {
-                  success: true,
-                  toolName: "terminal",
-                  data: {
-                    command: pending.command,
-                    output: execResult.stdout,
-                    reasoning: pending.explanation
-                  }
-                };
-                
-                const explanation = `Here's what I found:\n\n${execResult.stdout.substring(0, 1000)}${execResult.stdout.length > 1000 ? '\n\n...(output truncated)' : ''}`;
-                
-                // Save AI explanation to session
-                await addTelegramInteraction(userId, session, {
-                  role: "assistant",
-                  text: explanation
-                });
-                
-                // Use chunked message sending for long responses
-                const messages = telegramBot.formatTelegramResponse(explanation);
-                await telegramBot.sendMultipleMessages(chatId, messages);
-              }
-              
-              return;
-              
-            } else if (textLower === 'no' || textLower === 'n') {
-              console.log(`[TG] User rejected command: ${pending.command}`);
-              pendingCommands.delete(userId);
-              
-              await telegramBot.sendMessage(chatId, "❌ Command cancelled.");
-              return;
-              
-            } else {
-              // User sent something else - remind them
-              await telegramBot.sendMessage(chatId, `⏳ You have a pending command approval. Please reply with **"yes"** or **"no"**.\n\n**Command:** \`${pending.command}\``);
-              return;
-            }
-          }
-          
           await addTelegramInteraction(userId, session, { role: "user", text });
 
           // Detect conversation continuity
@@ -1381,107 +1302,68 @@ Type your question below and I'll respond!`;
             console.log(`[TG] Context prompt injected (${contextPrompt.length} chars)`);
           }
 
-          // Get Lumen's response with function calling
-          console.log(`[TG] Querying OpenAI for user ${userId} (function calling enabled)`);
-          
+          // Get Lumen's response
+          console.log(`[TG] Querying OpenAI for user ${userId}`);
+          const queryOptions = { schema: baseAgentResponseSchema };
           const contextForModel = {
             ...buildTelegramContext(session),
             agent: {
               name: "Lumen",
               description: "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
             },
-            platform: "telegram",
-            userId: userId  // Add userId for anchoring
+            platform: "telegram"
           };
 
-          // NEW: Use tool router instead of OpenAI function calling
-          console.log(`[TG] Routing query to best tool`);
-          const routingDecision = await routeToTool(text, contextForModel);
-          console.log(`[TG] Chosen tool: ${routingDecision.chosenTool} (${routingDecision.reasoning})`);
+          queryOptions.context = contextForModel;
 
-          let finalResponse;
-          
-          // Check if we should invoke a tool
-          if (routingDecision.shouldInvokeTool && routingDecision.chosenToolIndex >= 0) {
-            const tool = AVAILABLE_TOOLS[routingDecision.chosenToolIndex];
-            
-            // Handle direct response (no tool execution)
-            if (tool.type === "direct") {
-              console.log(`[TG] Direct response - querying OpenAI for conversational reply`);
-              const messages = [
-                {
-                  role: "system",
-                  content: `You are Lumen, SmartLedger Technology's intelligent guide. Context: ${JSON.stringify(contextForModel)}`
-                },
-                {
-                  role: "user",
-                  content: contextPrompt ? `${text}${contextPrompt}` : text
-                }
-              ];
-              const directResponse = await queryOpenAI(text, { context: contextForModel });
-              finalResponse = directResponse.response || directResponse.result || "I'm here to help!";
-            } 
-            // Handle tool execution
-            else {
-              console.log(`[TG] Executing tool: ${tool.name}`);
-              
-              // Add workspace context for terminal commands
-              const toolContext = tool.name === "terminal" 
-                ? { workspacePath: process.cwd() }
-                : null;
-              
-              const toolResult = await executeTool(tool, text, toolContext);
-              
-              // Handle terminal approval
-              if (toolResult.needsApproval && toolResult.data?.command) {
-                console.log(`[TG] Terminal command needs approval: ${toolResult.data.command}`);
-                
-                // Store pending command
-                pendingCommands.set(userId, {
-                  command: toolResult.data.command,
-                  explanation: toolResult.data.reasoning,
-                  timestamp: Date.now(),
-                  toolResult: toolResult,
-                  routingDecision: routingDecision
-                });
-                
-                // Send approval request
-                const approvalMessage = `**🖥️ Terminal Command Request**\n\n**Task:** ${toolResult.data.reasoning}\n**Command:** \`${toolResult.data.command}\`\n\n⚠️ **Approval Required** - Reply with:\n• **"yes"** to execute this command\n• **"no"** to cancel\n\nThis command will be executed with restricted permissions in the workspace directory.`;
-                await telegramBot.sendMessage(chatId, approvalMessage);
-                
-                // Don't continue - wait for approval
-                return;
-              }
-              
-              // Tool executed successfully - format output
-              finalResponse = formatToolOutput(toolResult, routingDecision);
+          // Inject context prompt if continuity detected
+          const queryText = contextPrompt ? `${text}${contextPrompt}` : text;
+
+          const initialResult = await queryOpenAI(queryText, queryOptions);
+          console.log(`[TG] Initial response received: ${initialResult.response.substring(0, 50)}...`);
+
+          // Chain responses if needed
+          const chainingOptions = {
+            schema: baseAgentResponseSchema,
+            context: contextForModel
+          };
+
+          const { responses, continuationHitLimit, totalIterations } = await chainResponses(
+            initialResult,
+            chainingOptions,
+            async (chainContext) => {
+              return await queryOpenAI(text, {
+                schema: baseAgentResponseSchema,
+                context: chainContext
+              });
             }
-          } else {
-            // No tool selected or shouldn't invoke - just respond conversationally
-            console.log(`[TG] No tool invocation - responding conversationally`);
-            const directResponse = await queryOpenAI(text, { context: contextForModel });
-            finalResponse = directResponse.response || directResponse.result || "I'm here to help!";
+          );
+
+          console.log(`[TG] Response chaining complete: ${responses.length} responses, ${totalIterations} iterations, limit_hit=${continuationHitLimit}`);
+
+          // Deduplicate responses to prevent sending the same thing twice
+          const uniqueResponses = [];
+          const seenTexts = new Set();
+          
+          // For Telegram, limit to first 1-2 responses to avoid flooding with similar messages
+          const maxResponsesForTelegram = 1;
+          let responsesAdded = 0;
+          
+          for (const resp of responses) {
+            const text = resp.response.trim();
+            if (!seenTexts.has(text) && responsesAdded < maxResponsesForTelegram) {
+              uniqueResponses.push(resp);
+              seenTexts.add(text);
+              responsesAdded++;
+              console.log(`[TG] Added response ${responsesAdded}/${maxResponsesForTelegram} (${text.length} chars)`);
+            } else if (seenTexts.has(text)) {
+              console.log(`[TG] Skipped exact duplicate response (${text.length} chars)`);
+            } else {
+              console.log(`[TG] Skipped response (hit max ${maxResponsesForTelegram} for Telegram, original was ${responses.length})`);
+            }
           }
 
-          console.log(`[TG] Final response ready: ${finalResponse.substring(0, 50)}...`);
-
-          // For Telegram, we'll send the complete response as one message
-          // Convert to baseAgent format for compatibility
-          const formattedResult = {
-            response: finalResponse,
-            responseType: routingDecision.chosenTool !== "direct-response" ? "tool_enhanced" : "conversational"
-          };
-
-          const responses = [formattedResult];
-          const continuationHitLimit = false;
-          const totalIterations = 1;
-
-          console.log(`[TG] Response ready for sending`);
-
-          // Deduplicate responses
-          const uniqueResponses = responses;
-
-          console.log(`[TG] After deduplication: ${uniqueResponses.length} responses for Telegram`);
+          console.log(`[TG] After deduplication: ${uniqueResponses.length} responses for Telegram (was ${responses.length} from chaining)`);
 
           // Store all responses in session
           const responsesText = uniqueResponses.map(r => r.response).join("\n\n---\n\n");

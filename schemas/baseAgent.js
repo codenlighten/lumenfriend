@@ -4,6 +4,10 @@ export const baseAgentResponseSchema = {
       response: { type: "string" },
       includesCode: { type: "boolean" },
       code: { type: "string" },
+      terminalCommand: {
+        type: "string",
+        description: "Terminal command to execute (leave empty if not applicable)"
+      },
       continue: { 
         type: "boolean", 
         description: "Whether this agent has more work to do and should be called again automatically" 
@@ -23,6 +27,6 @@ export const baseAgentResponseSchema = {
         items: { type: "string" }
       }
     },
-    required: ["response", "includesCode", "code", "continue", "questionsForUser", "questions", "missingContext"],
+    required: ["response", "includesCode", "code", "terminalCommand", "continue", "questionsForUser", "questions", "missingContext"],
     additionalProperties: false
   };
