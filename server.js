@@ -342,19 +342,25 @@ app.post("/api/chat", async (req, res) => {
       contextForModel = {
         ...baseContext,
         requestContext: requestContextForModel,
-        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
-        workspace: {
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. When generating terminal commands: if user provided workspace context, use that path; otherwise use relative paths (./, ../) or ask for clarification. Only populate fields relevant to your choice.",
+        workspace: requestContext?.workspace ? {
+          path: requestContext.workspace,
+          available: true,
+          userProvided: true
+        } : {
           path: process.cwd(),
-          available: true
+          available: true,
+          note: "Default server workspace. User should provide their workspace path for accurate commands."
         }
       };
     } else {
       contextForModel = {
         ...baseContext,
-        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. When generating terminal commands: use relative paths (./, ../) or ask user to specify their working directory for accurate commands. Only populate fields relevant to your choice.",
         workspace: {
           path: process.cwd(),
-          available: true
+          available: true,
+          note: "Default server workspace. Commands should use relative paths or request user's workspace path."
         }
       };
     }
@@ -561,7 +567,7 @@ app.post("/api/lumen", async (req, res) => {
           description:
             "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
         },
-        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. When generating terminal commands: if user provided workspace in context, use that path; otherwise use relative paths (./, ../) or ask for their working directory. Only populate fields relevant to your choice.",
         workspace: {
           path: process.cwd(),
           available: true
@@ -581,7 +587,7 @@ app.post("/api/lumen", async (req, res) => {
           description:
             "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
         },
-        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. When generating terminal commands: if user provided workspace in context, use that path; otherwise use relative paths (./, ../) or ask for their working directory. Only populate fields relevant to your choice.",
         workspace: {
           path: process.cwd(),
           available: true
@@ -595,6 +601,14 @@ app.post("/api/lumen", async (req, res) => {
 
     if (parsedContext) {
       contextForModel.userContext = parsedContext;
+      // If user provides workspace path, use it for terminal commands
+      if (parsedContext.workspace) {
+        contextForModel.workspace = {
+          path: parsedContext.workspace,
+          available: true,
+          userProvided: true
+        };
+      }
     }
 
     queryOptions.context = contextForModel;
@@ -1369,7 +1383,7 @@ Type your question below and I'll respond!`;
               name: "Lumen",
               description: "SmartLedger Technology's collaborative guide built from this project's methodologies and best practices."
             },
-            instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+            instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. When generating terminal commands: use relative paths (./, ../) or ask for user's working directory since Telegram doesn't provide workspace context. Only populate fields relevant to your choice.",
             workspace: {
               path: process.cwd(),
               available: true
