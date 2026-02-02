@@ -341,15 +341,29 @@ app.post("/api/chat", async (req, res) => {
       };
       contextForModel = {
         ...baseContext,
-        requestContext: requestContextForModel
+        requestContext: requestContextForModel,
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        workspace: {
+          path: process.cwd(),
+          available: true
+        }
+      };
+    } else {
+      contextForModel = {
+        ...baseContext,
+        instruction: "You are a universal agent. Analyze the query and choose the appropriate response type: 'response' for conversation and questions, 'code' for code generation requests, 'terminalCommand' for file/system operations. Only populate fields relevant to your choice.",
+        workspace: {
+          path: process.cwd(),
+          available: true
+        }
       };
     }
 
-    const result = await queryOpenAI(message, { context: contextForModel });
+    const result = await queryOpenAI(message, { schema: baseAgentExtendedResponseSchema, context: contextForModel });
 
     // Chain responses if continue is true (up to 10 iterations)
     const chainingOptions = {
-      schema: baseAgentResponseSchema,
+      schema: baseAgentExtendedResponseSchema,
       context: contextForModel
     };
 
@@ -358,13 +372,57 @@ app.post("/api/chat", async (req, res) => {
       chainingOptions,
       async (chainContext) => {
         return await queryOpenAI(message, {
-          schema: baseAgentResponseSchema,
+          schema: baseAgentExtendedResponseSchema,
           context: chainContext
         });
       }
     );
 
-    const responsesText = responses.map(r => r.response).join("\n\n---\n\n");
+    // Format responses based on choice type
+    const formattedResponses = responses.map(r => {
+      switch (r.choice) {
+        case "response":
+          return {
+            type: "response",
+            choice: r.choice,
+            response: r.response,
+            questionsForUser: r.questionsForUser,
+            missingContext: r.missingContext,
+            continue: r.continue,
+            order: r.order
+          };
+        case "code":
+          return {
+            type: "code",
+            choice: r.choice,
+            language: r.language,
+            code: r.code,
+            codeExplanation: r.codeExplanation,
+            continue: r.continue,
+            order: r.order
+          };
+        case "terminalCommand":
+          return {
+            type: "terminalCommand",
+            choice: r.choice,
+            command: r.terminalCommand,
+            reasoning: r.commandReasoning,
+            requiresApproval: r.requiresApproval,
+            continue: r.continue,
+            order: r.order
+          };
+        default:
+          return { ...r };
+      }
+    });
+
+    // Store formatted text in session memory
+    const responsesText = formattedResponses.map(r => {
+      if (r.type === "response") return r.response;
+      if (r.type === "code") return `[Code: ${r.language}]\n${r.code}\n\n${r.codeExplanation}`;
+      if (r.type === "terminalCommand") return `[Terminal: ${r.command}]\n${r.reasoning}`;
+      return JSON.stringify(r);
+    }).join("\n\n---\n\n");
     await addInteraction(session, { role: "ai", text: responsesText });
     touchSession(sessionId, session);
 
@@ -393,7 +451,7 @@ app.post("/api/chat", async (req, res) => {
 
     return res.json({
       sessionId,
-      responses,
+      responses: formattedResponses,
       continuationHitLimit,
       totalIterations,
       persist: persistResult,
@@ -1389,10 +1447,12 @@ Type your question below and I'll respond!`;
           await addTelegramInteraction(userId, session, { role: "ai", text: responsesText });
           console.log(`[TG] Session updated with combined response (${responsesText.length} chars)`);
 
-          // Record stats for engagement tracking
+          // Record stats for engagement tracking with response types
           const stats = await loadUserStats(userId);
-          await recordInteraction(userId, stats, text, responsesText);
-          console.log(`[TG] Stats recorded for user ${userId}: ${stats.interactions} interactions`);
+          const responseTypes = formattedResponses.map(r => r.choice).filter(Boolean);
+          const primaryResponseType = responseTypes[0]; // Track first/primary response type
+          await recordInteraction(userId, stats, text, responsesText, 0, [], primaryResponseType);
+          console.log(`[TG] Stats recorded for user ${userId}: ${stats.interactions} interactions, type: ${primaryResponseType}`);
 
           // Format and send responses - only send if we have unique ones
           let totalMessagesSent = 0;
